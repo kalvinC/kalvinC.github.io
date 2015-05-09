@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta http-equiv="Content-Style-Type" content="text/css">
+  <title>Kalvinc.GitHub.io</title>
+  <meta name="Description" content="Kalvinc.GitHub.io : ">
+  <meta name="Generator" content="Cocoa HTML Writer">
+  <meta name="CocoaVersion" content="1347.57">
+ 
+  <script src="../../javascripts/jquery-1.11.2.min.js"  type="javascript"></script>
+  <script src="../../javascripts/bootstrap.min.js" type="javascript"></script>
+  
+  <link rel="stylesheet" href="../../stylesheets/bootstrap.min.css">
+  
+</head>
+<body>
+  <div class="container-fluid">
+    <nav class="navbar navbar-inverse">
+      <div class="navbar-header">
+        <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#navbar" aria-expanded="false" aria-controls="navbar">
+          <span class="sr-only">Toggle navigation</span>
+        </button>
+        <a class="navbar-brand" href="#">KalvinC</a>
+      </div>
+      <div id="navbar" class="collapse navbar-collapse">
+        <ul class="nav navbar-nav">
+          <li class="active"><a href="../../index.html">Home</a></li>
+          <li><a href="../Articles/index1.html">Articles</a></li>
+          <li><a href="../Thoughts/index1.html">Thoughts</a></li>
+          <li><a href="../Resources/index1.html">Resources</a></li>
+          <li><a href="../About/kalvin.html">About</a></li>
+        </ul>
+      </div><!--/.nav-collapse -->
+    </nav>
+  </div>
+
+  <!--主要页面内容-->
+
+  <div class="container-fluid">
+    <h3 align="center">Redis源码阅读（1）-- makefile解析</h3>
+    <p>对redis源代码的阅读，我们采用的是最新版本3.0rc。从源代码的阅读方式，我采用从makefile文件开始，对于redis的makefile文件有两个部分，一个是整个工程的makefile文件，一个是依赖库的makefile文件。 </p>
+    <p>首先，从redis整个代码的文件结构来看，文件结构如下。</p>
+    <pre>
+      redis
+        |-deps //依赖库
+        |-src  //核心代码库
+        |-tests //测试
+        |-utils //里面包含了一些脚本处理
+        |-Makefile //整个代码的编译文件
+        |-redis.conf //redis配置文件
+        |-sentinel.conf
+    </pre>
+    <p>看完文件结构后，我们现在来看看Makefile文件</p>
+    <pre>
+      # Top level makefile, the real shit is at src/Makefile
+      default: all
+
+      //.DEFAULT 所在规则定义的命令，被用在重建那些没有具体规则的目标（明确规则和隐含规则）。就是说一个文件作为某个规则的依赖，但却不是另外一个规则的目标时。Make程序无法找到重建此文件的规则，此种情况时就执行“.DEFAULT”所指定的命令
+      .DEFAULT:
+         cd src && $(MAKE) $@ //进入src文件下，执行make install
+      install:
+         cd src && $(MAKE) $@
+      .PHONY: install
+    </pre>
+    <p>src文件下包含两个makefile文件，分别是makfefile，makefile.dep。</p>
+    <p>makefile 文件如下。</p>
+    <pre>
+      # Redis Makefile
+# Copyright (C) 2009 Salvatore Sanfilippo <antirez at gmail dot com>
+# This file is released under the BSD license, see the COPYING file
+#
+# The Makefile composes the final FINAL_CFLAGS and FINAL_LDFLAGS using
+# what is needed for Redis plus the standard CFLAGS and LDFLAGS passed.
+# However when building the dependencies (Jemalloc, Lua, Hiredis, ...)
+# CFLAGS and LDFLAGS are propagated to the dependencies, so to pass
+# flags only to be used when compiling / linking Redis itself REDIS_CFLAGS
+# and REDIS_LDFLAGS are used instead (this is the case of 'make gcov').
+#
+# Dependencies are stored in the Makefile.dep file. To rebuild this file
+# Just use 'make dep', but this is only needed by developers.
+
+release_hdr := $(shell sh -c './mkreleasehdr.sh')
+uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not')
+OPTIMIZATION?=-O2
+DEPENDENCY_TARGETS=hiredis linenoise lua
+
+# Default settings
+STD=-std=c99 -pedantic
+WARN=-Wall -W
+OPT=$(OPTIMIZATION)
+
+PREFIX?=/usr/local
+INSTALL_BIN=$(PREFIX)/bin
+INSTALL=install
+
+# Default allocator
+ifeq ($(uname_S),Linux)
+  MALLOC=jemalloc
+else
+  MALLOC=libc
+endif
+
+# Backwards compatibility for selecting an allocator
+ifeq ($(USE_TCMALLOC),yes)
+  MALLOC=tcmalloc
+endif
+
+ifeq ($(USE_TCMALLOC_MINIMAL),yes)
+  MALLOC=tcmalloc_minimal
+endif
+
+ifeq ($(USE_JEMALLOC),yes)
+  MALLOC=jemalloc
+endif
+
+# Override default settings if possible
+-include .make-settings
+
+FINAL_CFLAGS=$(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS) $(REDIS_CFLAGS)
+FINAL_LDFLAGS=$(LDFLAGS) $(REDIS_LDFLAGS) $(DEBUG)
+FINAL_LIBS=-lm
+DEBUG=-g -ggdb
+
+ifeq ($(uname_S),SunOS)
+  # SunOS
+  INSTALL=cp -pf
+  FINAL_CFLAGS+= -D__EXTENSIONS__ -D_XPG6
+  FINAL_LIBS+= -ldl -lnsl -lsocket -lresolv -lpthread -lrt
+else
+ifeq ($(uname_S),Darwin)
+  # Darwin (nothing to do)
+else
+ifeq ($(uname_S),AIX)
+        # AIX
+        FINAL_LDFLAGS+= -Wl,-bexpall
+        FINAL_LIBS+= -pthread -lcrypt -lbsd
+
+else
+  # All the other OSes (notably Linux)
+  FINAL_LDFLAGS+= -rdynamic
+  FINAL_LIBS+= -pthread
+endif
+endif
+endif
+# Include paths to dependencies
+FINAL_CFLAGS+= -I../deps/hiredis -I../deps/linenoise -I../deps/lua/src
+
+ifeq ($(MALLOC),tcmalloc)
+  FINAL_CFLAGS+= -DUSE_TCMALLOC
+  FINAL_LIBS+= -ltcmalloc
+endif
+
+ifeq ($(MALLOC),tcmalloc_minimal)
+  FINAL_CFLAGS+= -DUSE_TCMALLOC
+  FINAL_LIBS+= -ltcmalloc_minimal
+endif
+
+ifeq ($(MALLOC),jemalloc)
+  DEPENDENCY_TARGETS+= jemalloc
+  FINAL_CFLAGS+= -DUSE_JEMALLOC -I../deps/jemalloc/include
+  FINAL_LIBS+= ../deps/jemalloc/lib/libjemalloc.a -ldl
+endif
+
+REDIS_CC=$(QUIET_CC)$(CC) $(FINAL_CFLAGS)
+REDIS_LD=$(QUIET_LINK)$(CC) $(FINAL_LDFLAGS)
+REDIS_INSTALL=$(QUIET_INSTALL)$(INSTALL)
+
+CCCOLOR="\033[34m"
+LINKCOLOR="\033[34;1m"
+SRCCOLOR="\033[33m"
+BINCOLOR="\033[37;1m"
+MAKECOLOR="\033[32;1m"
+ENDCOLOR="\033[0m"
+
+ifndef V
+QUIET_CC = @printf '    %b %b\n' $(CCCOLOR)CC$(ENDCOLOR) $(SRCCOLOR)$@$(ENDCOLOR) 1>&2;
+QUIET_LINK = @printf '    %b %b\n' $(LINKCOLOR)LINK$(ENDCOLOR) $(BINCOLOR)$@$(ENDCOLOR) 1>&2;
+QUIET_INSTALL = @printf '    %b %b\n' $(LINKCOLOR)INSTALL$(ENDCOLOR) $(BINCOLOR)$@$(ENDCOLOR) 1>&2;
+endif
+
+REDIS_SERVER_NAME=redis-server
+REDIS_SENTINEL_NAME=redis-sentinel
+REDIS_SERVER_OBJ=adlist.o ae.o anet.o dict.o redis.o sds.o zmalloc.o lzf_c.o lzf_d.o pqsort.o zipmap.o sha1.o ziplist.o release.o networking.o util.o object.o db.o replication.o rdb.o t_string.o t_list.o t_set.o t_zset.o t_hash.o config.o aof.o pubsub.o multi.o debug.o sort.o intset.o syncio.o cluster.o crc16.o endianconv.o slowlog.o scripting.o bio.o rio.o rand.o memtest.o crc64.o bitops.o sentinel.o notify.o setproctitle.o blocked.o hyperloglog.o latency.o sparkline.o
+REDIS_CLI_NAME=redis-cli
+REDIS_CLI_OBJ=anet.o sds.o adlist.o redis-cli.o zmalloc.o release.o anet.o ae.o crc64.o
+REDIS_BENCHMARK_NAME=redis-benchmark
+REDIS_BENCHMARK_OBJ=ae.o anet.o redis-benchmark.o sds.o adlist.o zmalloc.o redis-benchmark.o
+REDIS_CHECK_DUMP_NAME=redis-check-dump
+REDIS_CHECK_DUMP_OBJ=redis-check-dump.o lzf_c.o lzf_d.o crc64.o
+REDIS_CHECK_AOF_NAME=redis-check-aof
+REDIS_CHECK_AOF_OBJ=redis-check-aof.o
+
+all: $(REDIS_SERVER_NAME) $(REDIS_SENTINEL_NAME) $(REDIS_CLI_NAME) $(REDIS_BENCHMARK_NAME) $(REDIS_CHECK_DUMP_NAME) $(REDIS_CHECK_AOF_NAME)
+  @echo ""
+  @echo "Hint: It's a good idea to run 'make test' ;)"
+  @echo ""
+
+.PHONY: all
+
+# Deps (use make dep to generate this)
+include Makefile.dep
+
+dep:
+  $(REDIS_CC) -MM *.c > Makefile.dep
+
+.PHONY: dep
+
+persist-settings: distclean
+  echo STD=$(STD) >> .make-settings
+  echo WARN=$(WARN) >> .make-settings
+  echo OPT=$(OPT) >> .make-settings
+  echo MALLOC=$(MALLOC) >> .make-settings
+  echo CFLAGS=$(CFLAGS) >> .make-settings
+  echo LDFLAGS=$(LDFLAGS) >> .make-settings
+  echo REDIS_CFLAGS=$(REDIS_CFLAGS) >> .make-settings
+  echo REDIS_LDFLAGS=$(REDIS_LDFLAGS) >> .make-settings
+  echo PREV_FINAL_CFLAGS=$(FINAL_CFLAGS) >> .make-settings
+  echo PREV_FINAL_LDFLAGS=$(FINAL_LDFLAGS) >> .make-settings
+  -(cd ../deps && $(MAKE) $(DEPENDENCY_TARGETS))
+
+.PHONY: persist-settings
+
+# Prerequisites target
+.make-prerequisites:
+  @touch $@
+
+# Clean everything, persist settings and build dependencies if anything changed
+ifneq ($(strip $(PREV_FINAL_CFLAGS)), $(strip $(FINAL_CFLAGS)))
+.make-prerequisites: persist-settings
+endif
+
+ifneq ($(strip $(PREV_FINAL_LDFLAGS)), $(strip $(FINAL_LDFLAGS)))
+.make-prerequisites: persist-settings
+endif
+
+# redis-server
+$(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ)
+  $(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_LIBS)
+
+# redis-sentinel
+$(REDIS_SENTINEL_NAME): $(REDIS_SERVER_NAME)
+  $(REDIS_INSTALL) $(REDIS_SERVER_NAME) $(REDIS_SENTINEL_NAME)
+
+# redis-cli
+$(REDIS_CLI_NAME): $(REDIS_CLI_OBJ)
+  $(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/linenoise/linenoise.o $(FINAL_LIBS)
+
+# redis-benchmark
+$(REDIS_BENCHMARK_NAME): $(REDIS_BENCHMARK_OBJ)
+  $(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a $(FINAL_LIBS)
+
+# redis-check-dump
+$(REDIS_CHECK_DUMP_NAME): $(REDIS_CHECK_DUMP_OBJ)
+  $(REDIS_LD) -o $@ $^ $(FINAL_LIBS)
+
+# redis-check-aof
+$(REDIS_CHECK_AOF_NAME): $(REDIS_CHECK_AOF_OBJ)
+  $(REDIS_LD) -o $@ $^ $(FINAL_LIBS)
+
+# Because the jemalloc.h header is generated as a part of the jemalloc build,
+# building it should complete before building any other object. Instead of
+# depending on a single artifact, build all dependencies first.
+%.o: %.c .make-prerequisites
+  $(REDIS_CC) -c $<
+
+clean:
+  rm -rf $(REDIS_SERVER_NAME) $(REDIS_SENTINEL_NAME) $(REDIS_CLI_NAME) $(REDIS_BENCHMARK_NAME) $(REDIS_CHECK_DUMP_NAME) $(REDIS_CHECK_AOF_NAME) *.o *.gcda *.gcno *.gcov redis.info lcov-html
+
+.PHONY: clean
+
+distclean: clean
+  -(cd ../deps && $(MAKE) distclean)
+  -(rm -f .make-*)
+
+.PHONY: distclean
+
+test: $(REDIS_SERVER_NAME) $(REDIS_CHECK_AOF_NAME)
+  @(cd ..; ./runtest)
+
+test-sentinel: $(REDIS_SENTINEL_NAME)
+  @(cd ..; ./runtest-sentinel)
+
+check: test
+
+lcov:
+  $(MAKE) gcov
+  @(set -e; cd ..; ./runtest --clients 1)
+  @geninfo -o redis.info .
+  @genhtml --legend -o lcov-html redis.info
+
+.PHONY: lcov
+
+bench: $(REDIS_BENCHMARK_NAME)
+  ./$(REDIS_BENCHMARK_NAME)
+
+32bit:
+  @echo ""
+  @echo "WARNING: if it fails under Linux you probably need to install libc6-dev-i386"
+  @echo ""
+  $(MAKE) CFLAGS="-m32" LDFLAGS="-m32"
+
+gcov:
+  $(MAKE) REDIS_CFLAGS="-fprofile-arcs -ftest-coverage -DCOVERAGE_TEST" REDIS_LDFLAGS="-fprofile-arcs -ftest-coverage"
+
+noopt:
+  $(MAKE) OPTIMIZATION="-O0"
+
+valgrind:
+  $(MAKE) OPTIMIZATION="-O0" MALLOC="libc"
+
+src/help.h:
+  @../utils/generate-command-help.rb > help.h
+
+install: all
+  @mkdir -p $(INSTALL_BIN)
+  $(REDIS_INSTALL) $(REDIS_SERVER_NAME) $(INSTALL_BIN)
+  $(REDIS_INSTALL) $(REDIS_BENCHMARK_NAME) $(INSTALL_BIN)
+  $(REDIS_INSTALL) $(REDIS_CLI_NAME) $(INSTALL_BIN)
+  $(REDIS_INSTALL) $(REDIS_CHECK_DUMP_NAME) $(INSTALL_BIN)
+  $(REDIS_INSTALL) $(REDIS_CHECK_AOF_NAME) $(INSTALL_BIN)
+  @ln -sf $(REDIS_SERVER_NAME) $(INSTALL_BIN)/$(REDIS_SENTINEL_NAME)
+    </pre>
+    <p>makefile文件定义了一系列变异参数，以及对不同操作系统环境下的一些头文件的设置，这里不再解释，可以慢慢阅读。
+    <p>从依赖库的makefile文件看，我们可以知道redis整个文件结构关系，同时可以作为我们阅读代码的一个指南，一步步的分析每个文件的功能，最后再从整个框架来理解redis的设计。下图是makfefile.dep的定义</p>
+    <pre>
+      adlist.o: adlist.c adlist.h zmalloc.h
+ae.o: ae.c ae.h zmalloc.h config.h ae_kqueue.c ae_epoll.c ae_select.c ae_evport.c
+ae_epoll.o: ae_epoll.c
+ae_evport.o: ae_evport.c
+ae_kqueue.o: ae_kqueue.c
+ae_select.o: ae_select.c
+anet.o: anet.c fmacros.h anet.h
+aof.o: aof.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h \
+ bio.h
+bio.o: bio.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h \
+ bio.h
+bitops.o: bitops.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h
+blocked.o: blocked.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h
+cluster.o: cluster.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h \
+ cluster.h endianconv.h
+config.o: config.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h \
+ cluster.h
+crc16.o: crc16.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h
+crc64.o: crc64.c
+db.o: db.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h \
+ cluster.h
+debug.o: debug.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h \
+ sha1.h crc64.h bio.h
+dict.o: dict.c fmacros.h dict.h zmalloc.h redisassert.h
+endianconv.o: endianconv.c
+hyperloglog.o: hyperloglog.c redis.h fmacros.h config.h \
+ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h ae.h sds.h dict.h \
+ adlist.h zmalloc.h anet.h ziplist.h intset.h version.h util.h latency.h \
+ sparkline.h rdb.h rio.h
+intset.o: intset.c intset.h zmalloc.h endianconv.h config.h
+latency.o: latency.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h
+lzf_c.o: lzf_c.c lzfP.h
+lzf_d.o: lzf_d.c lzfP.h
+memtest.o: memtest.c config.h
+multi.o: multi.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h
+networking.o: networking.c redis.h fmacros.h config.h \
+ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h ae.h sds.h dict.h \
+ adlist.h zmalloc.h anet.h ziplist.h intset.h version.h util.h latency.h \
+ sparkline.h rdb.h rio.h
+notify.o: notify.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h
+object.o: object.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h
+pqsort.o: pqsort.c
+pubsub.o: pubsub.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h
+rand.o: rand.c
+rdb.o: rdb.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h \
+ lzf.h zipmap.h endianconv.h
+redis-benchmark.o: redis-benchmark.c fmacros.h ae.h \
+ ../deps/hiredis/hiredis.h sds.h adlist.h zmalloc.h
+redis-check-aof.o: redis-check-aof.c fmacros.h config.h
+redis-check-dump.o: redis-check-dump.c lzf.h crc64.h
+redis-cli.o: redis-cli.c fmacros.h version.h ../deps/hiredis/hiredis.h \
+ sds.h zmalloc.h ../deps/linenoise/linenoise.h help.h anet.h ae.h
+redis.o: redis.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h \
+ cluster.h slowlog.h bio.h asciilogo.h
+release.o: release.c release.h version.h crc64.h
+replication.o: replication.c redis.h fmacros.h config.h \
+ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h ae.h sds.h dict.h \
+ adlist.h zmalloc.h anet.h ziplist.h intset.h version.h util.h latency.h \
+ sparkline.h rdb.h rio.h
+rio.o: rio.c fmacros.h rio.h sds.h util.h crc64.h config.h redis.h \
+ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h ae.h dict.h adlist.h \
+ zmalloc.h anet.h ziplist.h intset.h version.h latency.h sparkline.h \
+ rdb.h
+scripting.o: scripting.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h \
+ sha1.h rand.h ../deps/lua/src/lauxlib.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/lualib.h
+sds.o: sds.c sds.h zmalloc.h
+sentinel.o: sentinel.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h \
+ ../deps/hiredis/hiredis.h ../deps/hiredis/async.h \
+ ../deps/hiredis/hiredis.h
+setproctitle.o: setproctitle.c
+sha1.o: sha1.c sha1.h config.h
+slowlog.o: slowlog.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h \
+ slowlog.h
+sort.o: sort.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h \
+ pqsort.h
+sparkline.o: sparkline.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h
+syncio.o: syncio.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h
+t_hash.o: t_hash.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h
+t_list.o: t_list.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h
+t_set.o: t_set.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h
+t_string.o: t_string.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h
+t_zset.o: t_zset.c redis.h fmacros.h config.h ../deps/lua/src/lua.h \
+ ../deps/lua/src/luaconf.h ae.h sds.h dict.h adlist.h zmalloc.h anet.h \
+ ziplist.h intset.h version.h util.h latency.h sparkline.h rdb.h rio.h
+util.o: util.c fmacros.h util.h sds.h
+ziplist.o: ziplist.c zmalloc.h util.h sds.h ziplist.h endianconv.h \
+ config.h redisassert.h
+zipmap.o: zipmap.c zmalloc.h endianconv.h config.h
+zmalloc.o: zmalloc.c config.h zmalloc.h
+    </pre>
+    <p>从makefile.dep来看各个文件的依赖。对于redis源码的阅读，我们可以这个编译文件的内容开始，一步一步的阅读每个功能模块的功能，最后组成我们对整个redis的理解。这里我们只是简单的看看redis的源代码结构，以及编译文件的结构，以及如何开始对redis源代码的阅读。</p>
+    
+    <div class="row"> <span class="col-md-offset-10 col-xs-offset-10 col-sm-offset-10 col-md-2 col-xs-2 col-sm-2">Noted by 2015-5-10</span></div>
+  </div>
+
+  <div class="commment-list">
+    <H2>Comments</H2>
+    <script type="text/javascript">
+        (function(){
+            var url = "http://widget.weibo.com/distribution/comments.php?width=0&url=auto&fontsize=14&ralateuid=2231787150&language=zh_cn&dpc=1";
+            url = url.replace("url=auto", "url=" + document.URL);
+            document.write('<iframe id="WBCommentFrame" src="' + url + '" scrolling="no" frameborder="0" style="width:100%"></iframe>');
+            })();
+            </script>
+            <script src="http://tjs.sjs.sinajs.cn/open/widget/js/widget/comment.js" type="text/javascript" charset="utf-8"></script>
+            <script type="text/javascript">
+            window.WBComment.init({
+                "id": "WBCommentFrame"
+            });
+    </script>
+  </div>
+
+<footer align="center"> @CopyRight by kalvin</footer>
+</body>
+
+</html>
